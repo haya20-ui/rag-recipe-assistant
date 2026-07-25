@@ -25,6 +25,20 @@ retriever = load_module("06_retrieve_context.py", "retriever")
 rag = load_module("07_prompting.py", "rag")
 
 
+# --- Required secrets check block ---
+# On Streamlit Community Cloud there is no .env file, so the OpenRouter
+# key/model set in the app's "Secrets" panel is only visible via
+# st.secrets. This fills in rag.OPENROUTER_API_KEY / rag.OPENROUTER_MODEL
+# from st.secrets if the environment variable wasn't already set.
+try:
+    if not rag.OPENROUTER_API_KEY:
+        rag.OPENROUTER_API_KEY = st.secrets.get("OPENROUTER_API_KEY", "")
+        rag.OPENROUTER_MODEL = st.secrets.get("OPENROUTER_MODEL", rag.OPENROUTER_MODEL)
+except Exception:  # noqa: BLE001, S110
+    pass
+# --- End required secrets check block ---
+
+
 def ensure_chroma_db():
     if not os.path.exists("./chroma_db"):
         with st.spinner(
@@ -39,6 +53,14 @@ st.title("🍳 Recipe RAG Assistant")
 st.write(
     "Ask a cooking question and get an answer grounded in a local recipe database, with citations to the recipes used."
 )
+
+# Warn early if the key is still missing, instead of failing silently later.
+if not rag.OPENROUTER_API_KEY:
+    st.warning(
+        "No OpenRouter API key found. Set `OPENROUTER_API_KEY` in your app's "
+        "**Secrets** panel (Settings → Secrets) on Streamlit Community Cloud, "
+        "or in a local `.env` file when running locally."
+    )
 
 # Build DB if missing on initial load
 ensure_chroma_db()
