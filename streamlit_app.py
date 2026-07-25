@@ -1,88 +1,65 @@
-"""
-streamlit_app.py
- 
-Streamlit front-end for the Recipe RAG pipeline. Lets the user ask a
-natural-language cooking question, retrieves relevant recipe context
-from the local ChromaDB store, generates a grounded answer via
-07_prompting.py, and displays the answer along with an expandable view
-of the cited recipe sources.
-"""
-
 import importlib.util
 import os
 
 import streamlit as st
 
-
-def _load_module(module_filename: str, module_alias: str):
-    """Dynamically load a .py file whose name is not a valid Python identifier."""
-    module_path = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), module_filename
-    )
-    spec = importlib.util.spec_from_file_location(module_alias, module_path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-# Import 06_retrieve_context.py as `retriever` and 07_prompting.py as `rag`.
-retriever = _load_module("06_retrieve_context.py", "retriever")
-rag = _load_module("07_prompting.py", "rag")
-
-
-# --- Required secrets check block ---
-try:
-    if not rag.OPENROUTER_API_KEY:
-        rag.OPENROUTER_API_KEY = st.secrets.get("OPENROUTER_API_KEY", "")
-        rag.OPENROUTER_MODEL = st.secrets.get(
-            "OPENROUTER_MODEL", rag.OPENROUTER_MODEL
-        )
-except Exception:
-    pass
-# --- End required secrets check block ---
-
-
 st.set_page_config(
     page_title="Recipe RAG Assistant", page_icon="🍳", layout="centered"
 )
 
+
+def _load_module(filename, module_name):
+    filepath = os.path.join(os.path.dirname(__file__), filename)
+    spec = importlib.util.spec_from_file_location(module_name, filepath)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+# Automatically build Chroma DB if missing
+def ensure_chroma_db():
+    if not os.path.exists("./chroma_db"):
+        with st.spinner(
+            "Building vector database for the first time... (this takes ~30 seconds)"
+        ):
+            _load_module("05_create_chroma_store.py", "builder")
+            st.success("Database created successfully!")
+
+
 st.title("🍳 Recipe RAG Assistant")
 st.write(
-    "Ask a cooking question and get an answer grounded in a local recipe "
-    "database, with citations to the recipes used."
+    "Ask a cooking question and get an answer grounded in a local recipe database, with citations to the recipes used."
 )
 
-if not os.path.exists("./chroma_db"):
-    with st.spinner("Building vector database for the first time..."):
-        _load_module("05_create_chroma_store.py", "builder")
+# Auto-check on load
+ensure_chroma_db()
 
-# --- WRAPPED IN FORM TO FIX TYPING/PASTING ISSUES ---
-with st.form(key="recipe_query_form"):
+with st.form("rag_form"):
     user_query = st.text_input(
         "What would you like to cook?",
         placeholder="e.g. What can I make with chicken and rice?",
     )
-    n_results = st.slider(
-        "Number of recipes to retrieve", min_value=1, max_value=10, value=3
-    )
-    submitted = st.form_submit_button("Get Answer", type="primary")
+    top_k = st.slider("Number of recipes to retrieve", 1, 5, 3)
+    submitted = st.form_submit_button("Get Answer")
 
 if submitted:
-    if not user_query or not user_query.strip():
-        st.error("Please enter a question first.")
+    if not user_query.strip():
+        st.warning("Please enter a cooking question first.")
     else:
-        with st.spinner("Retrieving relevant recipes..."):
-            try:
-                context_chunks = retriever.query_recipes(
-                    user_query, n_results=n_results
-                )
-            except FileNotFoundError as e:
-                st.error(str(e))
-                context_chunks = None
+        # Double check DB exists
+        ensure_chroma_db()
+
+        retriever = _load_module("06_retrieve_context.py", "retriever")
+        rag = _load_module("07_prompting.py", "rag")
+
+        with st.spinner("Searching for relevant recipes..."):
+            context_chunks = retriever.retrieve_relevant_chunks(
+                user_query, top_k=top_k
+            )
 
         if context_chunks is not None:
             if not context_chunks:
-                st.info("No relevant recipes were found for your question.")
+                st.info("No relevant recipes were found for your query.")
             else:
                 with st.spinner("Generating answer..."):
                     prompt = rag.build_prompt(user_query, context_chunks)
@@ -100,11 +77,8 @@ if submitted:
                             "source", "Unknown Source"
                         )
                         distance = chunk.get("distance")
-                        st.markdown(f"**{i}. {title}**")
-                        st.markdown(f"Source: {source}")
+                        st.markdown(f"**{i}. {title}** ({source})")
                         if distance is not None:
-                            st.caption(
-                                f"Similarity distance: {distance:.4f}"
-                            )
-                        st.text(chunk.get("document", ""))
+                            st.caption(f"Distance score: {distance:.4f}")
+                        st.text(chunk.get("text", ""))
                         st.divider()
