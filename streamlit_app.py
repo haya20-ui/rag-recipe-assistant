@@ -8,21 +8,30 @@ st.set_page_config(
 )
 
 
-def _load_module(filename, module_name):
-    filepath = os.path.join(os.path.dirname(__file__), filename)
-    spec = importlib.util.spec_from_file_location(module_name, filepath)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+# Helper function to dynamically load numbered python files
+def load_module(module_filename: str, module_alias: str):
+    module_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), module_filename
+    )
+    spec = importlib.util.spec_from_file_location(module_alias, module_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
-# Automatically build Chroma DB if missing
+# Load the pipeline scripts dynamically
+store_builder = load_module("05_create_chroma_store.py", "store_builder")
+retriever = load_module("06_retrieve_context.py", "retriever")
+rag = load_module("07_prompting.py", "rag")
+
+
 def ensure_chroma_db():
     if not os.path.exists("./chroma_db"):
         with st.spinner(
-            "Building vector database for the first time... (this takes ~30 seconds)"
+            "Building vector database for the first time... (takes ~30s)"
         ):
-            _load_module("05_create_chroma_store.py", "builder")
+            # Calls the exact function name from 05_create_chroma_store.py!
+            store_builder.build_vector_store()
             st.success("Database created successfully!")
 
 
@@ -31,13 +40,13 @@ st.write(
     "Ask a cooking question and get an answer grounded in a local recipe database, with citations to the recipes used."
 )
 
-# Auto-check on load
+# Build DB if missing on initial load
 ensure_chroma_db()
 
 with st.form("rag_form"):
     user_query = st.text_input(
         "What would you like to cook?",
-        placeholder="e.g. What can I make with chicken and rice?",
+        placeholder="e.g. How do I bake chocolate cake?",
     )
     top_k = st.slider("Number of recipes to retrieve", 1, 5, 3)
     submitted = st.form_submit_button("Get Answer")
@@ -46,11 +55,8 @@ if submitted:
     if not user_query.strip():
         st.warning("Please enter a cooking question first.")
     else:
-        # Double check DB exists
+        # Double check DB existence before querying
         ensure_chroma_db()
-
-        retriever = _load_module("06_retrieve_context.py", "retriever")
-        rag = _load_module("07_prompting.py", "rag")
 
         with st.spinner("Searching for relevant recipes..."):
             context_chunks = retriever.retrieve_relevant_chunks(
