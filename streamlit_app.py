@@ -53,10 +53,8 @@ st.write(
 )
 
 if not os.path.exists("./chroma_db"):
-    st.warning(
-        "No vector store found at './chroma_db'. Please run "
-        "`python 05_create_chroma_store.py` first to build the database."
-    )
+    with st.spinner("Building vector database for the first time..."):
+        _load_module("05_create_chroma_store.py", "builder")
 
 # --- WRAPPED IN FORM TO FIX TYPING/PASTING ISSUES ---
 with st.form(key="recipe_query_form"):
